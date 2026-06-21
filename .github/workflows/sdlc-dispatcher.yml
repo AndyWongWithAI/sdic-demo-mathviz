@@ -60,7 +60,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "→ Triggering ${{ steps.read.outputs.deploy }}"
-          gh workflow run "${{ steps.read.outputs.deploy }}" --ref "${{ github.ref }}"
+          gh workflow run "${{ steps.read.outputs.deploy }}" --ref "${{ github.ref }}" \
+            -f service_name="sdic-demo-mathviz" \
+            -f deploy_target="gh-pages"
 
   # 横切：校验 registry 完整性（始终跑）
   validate:
