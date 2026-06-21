@@ -1,0 +1,18 @@
+{
+  "$schema": "https://arch.intelab.cn/schemas/aip-v1.json",
+  "arch_requirement_id": "b9a407b1-fad3-400e-b837-30325083a003",
+  "name": "sdic-demo-mathviz",
+  "title": "MathViz - 数学函数可视化（SDLC 跨项目 demo）",
+  "description": "SDLC workflow 跨项目验证目标项目。需求 arch://b9a407b1（数学函数绘图网站）的实施载体。技术栈：原生 JS + HTML5 Canvas，零依赖。",
+  "layer": "L3_application",
+  "category": "ui",
+  "scope": "app",
+  "stack": {
+    "language": "javascript",
+    "framework": "vanilla",
+    "version": "ES2022"
+  },
+  "registry_ref": "/home/hq/.claude/skills/sdlc/registry.json",
+  "manifest_schema_ref": "/home/hq/.claude/specs/sdlc/manifest-schema.md",
+  "tags": ["sdlc-demo", "mathviz", "cross-project-validation"]
+}

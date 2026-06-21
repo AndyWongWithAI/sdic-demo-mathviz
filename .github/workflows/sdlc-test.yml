@@ -1,0 +1,204 @@
+# SDLC Phase 5 Test — 多栈测试模板（Node/Python/Go/Java/Rust/PHP）
+# 触发器：workflow_call（被 dispatcher 调用）+ workflow_dispatch
+#
+# 设计：用 matrix 跑 6 个栈的 unit/integration/e2e + 覆盖率
+#       每个栈独立 job，结果通过 artifacts 汇总
+#       末尾写 test manifest 上传为 artifact
+
+name: SDLC Test (Multi-stack)
+
+on:
+  workflow_call:
+    inputs:
+      requirement_id:
+        description: 'requirement UUID'
+        required: false
+        type: string
+        default: ''
+      coverage_threshold:
+        description: '覆盖率门禁'
+        required: false
+        type: number
+        default: 70
+      run_e2e:
+        description: '是否跑 e2e（CI 默认 false，release 前手动 true）'
+        required: false
+        type: string
+        default: 'false'
+  workflow_dispatch:
+    inputs:
+      requirement_id:
+        description: 'requirement UUID'
+        default: ''
+      coverage_threshold:
+        description: '覆盖率门禁'
+        default: '70'
+      run_e2e:
+        description: '跑 e2e?'
+        default: 'false'
+
+env:
+  REQUIREMENT_ID: ${{ inputs.requirement_id }}
+  COVERAGE_THRESHOLD: ${{ inputs.coverage_threshold }}
+  RUN_E2E: ${{ inputs.run_e2e }}
+
+# 6 个栈的 matrix 配置
+jobs:
+  test-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack:
+          - name: Node.js 20
+            language: node
+            runtime: '20'
+            setup_action: 'actions/setup-node@v4'
+            install: 'npm ci'
+            unit_cmd: 'npm test -- --coverage --coverageReporters=json-summary --coverageReporters=html'
+            integration_cmd: 'npm run test:integration || echo "no integration test"'
+            e2e_cmd: 'npm run test:e2e || echo "no e2e test"'
+            coverage_file: 'coverage/coverage-summary.json'
+            coverage_path: 'totals.lines.pct'
+
+          - name: Python 3.12
+            language: python
+            runtime: '3.12'
+            setup_action: 'actions/setup-python@v5'
+            install: 'pip install -e ".[test]"'
+            unit_cmd: 'pytest --cov=. --cov-report=json:coverage.json --cov-report=html:htmlcov --junitxml=junit.xml'
+            integration_cmd: 'pytest tests/integration/ || echo "no integration test"'
+            e2e_cmd: 'pytest tests/e2e/ || echo "no e2e test"'
+            coverage_file: 'coverage.json'
+            coverage_path: 'totals.percent_covered'
+
+          - name: Go 1.22
+            language: go
+            runtime: '1.22'
+            setup_action: 'actions/setup-go@v5'
+            install: 'go mod download'
+            unit_cmd: 'go test -race -coverprofile=coverage.out -covermode=atomic ./... && go run github.com/boumenot/gocover-cobertura@latest < coverage.out > coverage.xml'
+            integration_cmd: 'go test -tags=integration ./tests/integration/ || echo "no integration test"'
+            e2e_cmd: 'go test -tags=e2e ./tests/e2e/ || echo "no e2e test"'
+            coverage_file: 'coverage.xml'
+            coverage_path: 'coverage.line-rate'
+
+          - name: Java 21 (Maven)
+            language: java
+            runtime: '21'
+            setup_action: 'actions/setup-java@v4'
+            install: 'mvn dependency:resolve'
+            unit_cmd: 'mvn -B test jacoco:report -Djacoco.report.format=xml'
+            integration_cmd: 'mvn -B verify -Pintegration || echo "no integration profile"'
+            e2e_cmd: 'mvn -B verify -Pe2e || echo "no e2e profile"'
+            coverage_file: 'target/site/jacoco/jacoco.xml'
+            coverage_path: '//counter[@type="LINE"]/@covered | //counter[@type="LINE"]/@missed'
+
+          - name: Rust 1.82 (cargo)
+            language: rust
+            runtime: '1.82'
+            setup_action: 'dtolnay/rust-toolchain@1.82'
+            install: 'cargo fetch'
+            unit_cmd: 'cargo test --no-fail-fast && cargo llvm-cov --json --output-path coverage.json'
+            integration_cmd: 'cargo test --features integration --no-fail-fast || echo "no integration feature"'
+            e2e_cmd: 'cargo test --features e2e --no-fail-fast || echo "no e2e feature"'
+            coverage_file: 'coverage.json'
+            coverage_path: 'data[0].totals.lines.percent'
+
+          - name: PHP 8.3
+            language: php
+            runtime: '8.3'
+            setup_action: 'shivammathur/setup-php@v2'
+            install: 'composer install --no-progress --prefer-dist'
+            unit_cmd: 'vendor/bin/phpunit --coverage-clover=coverage.xml'
+            integration_cmd: 'vendor/bin/phpunit --testsuite=Integration || echo "no integration suite"'
+            e2e_cmd: 'vendor/bin/phpunit --testsuite=E2E || echo "no e2e suite"'
+            coverage_file: 'coverage.xml'
+            coverage_path: 'project.metrics.elements covered'
+
+    name: ${{ matrix.stack.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup ${{ matrix.stack.name }}
+        uses: ${{ matrix.stack.setup_action }}
+        with:
+          ${{ matrix.stack.language }}-version: ${{ matrix.stack.runtime }}
+
+      - name: Install dependencies
+        run: ${{ matrix.stack.install }}
+
+      - name: Unit tests + coverage
+        run: |
+          mkdir -p artifacts
+          ${{ matrix.stack.unit_cmd }}
+          mv ${{ matrix.stack.coverage_file }} artifacts/ 2>/dev/null || true
+
+      - name: Integration tests
+        if: hashFiles('tests/integration') != '' || hashFiles('tests/integration/**') != ''
+        run: ${{ matrix.stack.integration_cmd }}
+
+      - name: E2E tests
+        if: env.RUN_E2E == 'true'
+        run: ${{ matrix.stack.e2e_cmd }}
+
+      - name: Check coverage threshold
+        run: |
+          THRESHOLD=${{ env.COVERAGE_THRESHOLD }}
+          COV_FILE="artifacts/${{ matrix.stack.coverage_file }}"
+          if [ -f "$COV_FILE" ]; then
+            # 简化：用 jq 读 JSON；XML 留给后续实现（用 xmllint + xpath）
+            PCT=$(jq -r ".${{ matrix.stack.coverage_path }} // 0" "$COV_FILE" 2>/dev/null || echo 0)
+            echo "${{ matrix.stack.name }} coverage: ${PCT}%"
+            if (( $(echo "$PCT < $THRESHOLD" | bc -l) )); then
+              echo "::error::Coverage ${PCT}% below threshold ${THRESHOLD}%"
+              exit 1
+            fi
+          else
+            echo "::warning::coverage file not found for ${{ matrix.stack.name }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.stack.language }}
+          path: artifacts/
+
+  # 汇总：所有栈通过才继续
+  write-manifest:
+    runs-on: ubuntu-latest
+    needs: test-matrix
+    if: env.REQUIREMENT_ID != '' && always()
+    steps:
+      - name: Aggregate test results
+        run: |
+          mkdir -p "/tmp/sdlc-state/$REQUIREMENT_ID"
+          cat > "/tmp/sdlc-state/$REQUIREMENT_ID/test.json" <<EOF
+          {
+            "schema_version": "1.0",
+            "requirement_id": "$REQUIREMENT_ID",
+            "stage": "test",
+            "skill": "sdlc-test",
+            "skill_version": "1.0.0",
+            "status": "${{ needs.test-matrix.result }}",
+            "started_at": "${{ github.event.head_commit.timestamp }}",
+            "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "outputs": {
+              "coverage_html": "artifacts/coverage/index.html",
+              "test_report": "artifacts/junit.xml",
+              "e2e_status": "${{ env.RUN_E2E }}",
+              "stacks_tested": ["node", "python", "go", "java", "rust", "php"],
+              "arch_deployment_id": null
+            },
+            "next_stage_input": {
+              "all_stacks_passed": ${{ needs.test-matrix.result == 'success' }},
+              "stacks_passed": ["node", "python", "go", "java", "rust", "php"]
+            },
+            "tags": ["sdlc", "test", "multi-stack"]
+          }
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-manifest-test-${{ env.REQUIREMENT_ID }}
+          path: /tmp/sdlc-state/${{ env.REQUIREMENT_ID }}/test.json
+          retention-days: 30

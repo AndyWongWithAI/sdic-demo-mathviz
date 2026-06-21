@@ -1,0 +1,9 @@
+{
+  "_comment": "项目级 SDLC workflow 注册表。与全局 ~/.claude/skills/sdlc/registry.json 同结构，但 ci/test/deploy 指向项目根 .github/workflows/ 下的 yaml 文件名（不含路径）。要替换某个阶段 workflow：装新 yaml + 改本表 1 行 + 提交，其他无感。",
+  "_schema_version": "1.0",
+  "_updated_at": "2026-06-22",
+  "_null_allowed": "true（写 null 表示「待接入」，dispatcher 不触发对应 workflow）",
+  "ci": "sdlc-ci.yml",
+  "test": "sdlc-test.yml",
+  "deploy": "sdlc-deploy.yml"
+}

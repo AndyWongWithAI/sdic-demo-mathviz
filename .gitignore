@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+
+# 运行时
+__pycache__/
+*.pyc
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# SDLC artifacts（manifest 等）
+/tmp/sdlc-state/
+artifacts/
+coverage/
+htmlcov/
+*.lcov
+coverage.xml
+coverage.json
+
+# 部署相关
+.env
+secrets.yaml

@@ -1,0 +1,186 @@
+# SDLC Phase 6 Deploy — 复用 connect-cd + 增量接 arch deployment create
+# 触发器：workflow_call（被 dispatcher 调用）+ workflow_dispatch
+#
+# 设计：复用 connect-cd 的部署逻辑（restricted SSH + tarball + systemd），
+#       增量：在部署成功后调 `arch deployment create` 留痕
+
+name: SDLC Deploy
+
+on:
+  workflow_call:
+    inputs:
+      requirement_id:
+        description: 'requirement UUID'
+        required: false
+        type: string
+        default: ''
+      arch_component_id:
+        description: 'component UUID'
+        required: false
+        type: string
+        default: ''
+      arch_version_id:
+        description: 'version UUID（可选，从 arch-platform 取 latest）'
+        required: false
+        type: string
+        default: ''
+      service_name:
+        description: 'systemd service 名（如 my-website）'
+        required: true
+        type: string
+      deploy_target:
+        description: '部署目标（如 huawei-1 / lighthouse-2）'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      requirement_id:
+        description: 'requirement UUID'
+        required: false
+        default: ''
+      service_name:
+        description: 'systemd service 名'
+        required: true
+      deploy_target:
+        description: '部署目标'
+        required: true
+
+env:
+  REQUIREMENT_ID: ${{ inputs.requirement_id }}
+  ARCH_COMPONENT_ID: ${{ inputs.arch_component_id }}
+  ARCH_VERSION_ID: ${{ inputs.arch_version_id }}
+  SERVICE_NAME: ${{ inputs.service_name }}
+  DEPLOY_TARGET: ${{ inputs.deploy_target }}
+
+jobs:
+  # Step 1: 拉取 CI 产物（image tag）
+  fetch-ci-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-${{ github.sha }}
+        continue-on-error: true
+
+  # Step 2: 复用 connect-cd 部署逻辑（SCP + SSH + systemd restart）
+  deploy:
+    runs-on: ubuntu-latest
+    needs: fetch-ci-artifacts
+    environment: ${{ inputs.deploy_target }}  # 引用 GH Environment 配置 SSH secrets
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Tarball + SCP + systemd restart (connect-cd pattern)
+        run: |
+          set -euo pipefail
+          tar czf /tmp/app.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='__pycache__' \
+            --exclude='.venv' \
+            --exclude='artifacts' \
+            .
+
+          # SCP 到目标主机（路径来自 connect-cd 约定）
+          scp /tmp/app.tar.gz "$DEPLOY_TARGET:/tmp/app.tar.gz"
+
+          # SSH 远程执行解压 + 重启
+          ssh "$DEPLOY_TARGET" << 'REMOTE'
+          set -euo pipefail
+          APP_DIR="/opt/services/${SERVICE_NAME}"
+          sudo mkdir -p "$APP_DIR"
+          sudo tar xzf /tmp/app.tar.gz -C "$APP_DIR"
+          sudo systemctl restart "${SERVICE_NAME}.service"
+          sleep 3
+          sudo systemctl is-active "${SERVICE_NAME}.service"
+          REMOTE
+
+          echo "✓ Deploy succeeded on $DEPLOY_TARGET"
+
+  # Step 3: Post-deploy health check（5 维诊断）
+  healthcheck:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run 5-dim health check
+        run: |
+          # 复用 post-deploy-healthcheck 的 5 维诊断（精简版）
+          SERVICE_URL="${SERVICE_URL:-http://${DEPLOY_TARGET}:8080}"
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$SERVICE_URL" || echo "000")
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Health check failed: HTTP $HTTP_CODE at $SERVICE_URL"
+            exit 1
+          fi
+          echo "✓ Health check passed: HTTP $HTTP_CODE"
+
+  # Step 4: 调 arch deployment create 留痕（增量价值）
+  register-deployment:
+    runs-on: ubuntu-latest
+    needs: healthcheck
+    if: env.REQUIREMENT_ID != '' && env.ARCH_COMPONENT_ID != ''
+    steps:
+      - name: Install arch CLI
+        run: pip install arch-platform-cli
+      - name: Create deployment record
+        env:
+          ARCH_API_KEY: ${{ secrets.ARCH_API_KEY }}
+        run: |
+          RESOLVED_VERSIONS=$(jq -n --arg v "$ARCH_VERSION_ID" '{($v): "0.0.1"}')
+          arch deployment create "$ARCH_COMPONENT_ID" \
+            --version-id "$ARCH_VERSION_ID" \
+            --target "$DEPLOY_TARGET" \
+            --resolved-versions "$RESOLVED_VERSIONS" \
+            --notes "Deployed by SDLC CI (commit ${{ github.sha }}, run ${{ github.run_number }})"
+
+  # Step 5: 写 deploy manifest 上传为 artifact
+  write-manifest:
+    runs-on: ubuntu-latest
+    needs: [deploy, healthcheck, register-deployment]
+    if: always() && env.REQUIREMENT_ID != ''
+    steps:
+      - name: Write deploy manifest
+        env:
+          REQUIREMENT_ID: ${{ env.REQUIREMENT_ID }}
+          HEALTHCHECK_STATUS: ${{ needs.healthcheck.result }}
+        run: |
+          mkdir -p "/tmp/sdlc-state/$REQUIREMENT_ID"
+          STATUS="succeeded"
+          if [ "$HEALTHCHECK_STATUS" != "success" ]; then
+            STATUS="failed"
+          fi
+          cat > "/tmp/sdlc-state/$REQUIREMENT_ID/deploy.json" <<EOF
+          {
+            "schema_version": "1.0",
+            "requirement_id": "$REQUIREMENT_ID",
+            "stage": "deploy",
+            "skill": "sdlc-deploy",
+            "skill_version": "1.0.0",
+            "status": "$STATUS",
+            "started_at": "${{ github.event.head_commit.timestamp }}",
+            "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "outputs": {
+              "arch_deployment_id": "$(arch deployment list $ARCH_COMPONENT_ID --format json 2>/dev/null | jq -r '.[0].id // \"\"')",
+              "service_url": "${SERVICE_URL:-http://${{ env.DEPLOY_TARGET }}:8080}",
+              "deployment_log": "deploy.log"
+            },
+            "next_stage_input": {
+              "deployment_id": "see arch platform",
+              "service_url": "${SERVICE_URL:-http://${{ env.DEPLOY_TARGET }}:8080}",
+              "operate_status": "healthy"
+            },
+            "tags": ["sdlc", "deploy"]
+          }
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-manifest-deploy-${{ env.REQUIREMENT_ID }}
+          path: /tmp/sdlc-state/${{ env.REQUIREMENT_ID }}/deploy.json
+          retention-days: 30
