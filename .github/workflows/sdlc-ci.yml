@@ -147,7 +147,7 @@ jobs:
           fi
       - name: Run Trivy vulnerability scanner
         if: steps.check.outputs.has_image == 'true'
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: $IMAGE_TAG
           format: 'json'
