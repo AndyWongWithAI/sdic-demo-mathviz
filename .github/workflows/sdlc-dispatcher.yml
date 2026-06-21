@@ -4,25 +4,18 @@
 # 替换某阶段 workflow：
 #   1. 提交新 yaml 到 .github/workflows/（如 sdlc-ci-v2.yml）
 #   2. 改 sdlc-registry.json 1 行："ci": "sdlc-ci.yml" → "ci": "sdlc-ci-v2.yml"
-#   3. commit & push → dispatcher 自动调用新 yaml
+#   3. commit & push → dispatcher 自动用 gh CLI 触发新 yaml
 
 name: SDLC Dispatcher
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
-  # 读 registry 决定跑哪些 workflow
-  resolve:
+  trigger:
     runs-on: ubuntu-latest
-    outputs:
-      ci: ${{ steps.read.outputs.ci }}
-      test: ${{ steps.read.outputs.test }}
-      deploy: ${{ steps.read.outputs.deploy }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,56 +24,49 @@ jobs:
         run: |
           if [ -f .github/workflows/sdlc-registry.json ]; then
             REG=$(cat .github/workflows/sdlc-registry.json)
-            CI=$(echo "$REG" | jq -r '.ci // ""')
-            TEST=$(echo "$REG" | jq -r '.test // ""')
-            DEPLOY=$(echo "$REG" | jq -r '.deploy // ""')
+            echo "ci=$(echo "$REG" | jq -r '.ci // ""')" >> "$GITHUB_OUTPUT"
+            echo "test=$(echo "$REG" | jq -r '.test // ""')" >> "$GITHUB_OUTPUT"
+            echo "deploy=$(echo "$REG" | jq -r '.deploy // ""')" >> "$GITHUB_OUTPUT"
+            echo "✓ Registry resolved"
           else
-            echo "::warning::sdlc-registry.json not found, all workflows skipped"
-            CI=""; TEST=""; DEPLOY=""
-          fi
-          echo "ci=$CI" >> "$GITHUB_OUTPUT"
-          echo "test=$TEST" >> "$GITHUB_OUTPUT"
-          echo "deploy=$DEPLOY" >> "$GITHUB_OUTPUT"
-          echo "✓ Registry resolved: ci=$CI test=$TEST deploy=$DEPLOY"
-
-  ci:
-    needs: resolve
-    if: needs.resolve.outputs.ci != ''
-    uses: ./.github/workflows/${{ needs.resolve.outputs.ci }}
-    with:
-      requirement_id: ${{ inputs.requirement_id }}
-      arch_component_id: ${{ inputs.arch_component_id }}
-
-  test:
-    needs: [resolve, ci]
-    if: needs.resolve.outputs.test != ''
-    uses: ./.github/workflows/${{ needs.resolve.outputs.test }}
-    with:
-      requirement_id: ${{ inputs.requirement_id }}
-
-  deploy:
-    needs: [resolve, ci, test]
-    if: needs.resolve.outputs.deploy != '' && github.event_name == 'push'
-    uses: ./.github/workflows/${{ needs.resolve.outputs.deploy }}
-    with:
-      requirement_id: ${{ inputs.requirement_id }}
-      arch_component_id: ${{ inputs.arch_component_id }}
-
-  # 横切：触发 sdlc-registry-validate（CI/CD 完整性）
-  validate:
-    needs: [resolve]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate SDLC registry
-        run: |
-          if [ ! -f .github/workflows/sdlc-registry.json ]; then
-            echo "::error::sdlc-registry.json missing in .github/workflows/"
+            echo "::error::sdlc-registry.json not found"
             exit 1
           fi
+
+      - name: Trigger CI workflow
+        if: steps.read.outputs.ci != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "→ Triggering ${{ steps.read.outputs.ci }}"
+          gh workflow run "${{ steps.read.outputs.ci }}" --ref "${{ github.ref }}"
+
+      - name: Trigger test workflow
+        if: steps.read.outputs.test != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "→ Triggering ${{ steps.read.outputs.test }}"
+          gh workflow run "${{ steps.read.outputs.test }}" --ref "${{ github.ref }}"
+
+      - name: Trigger deploy workflow
+        if: steps.read.outputs.deploy != '' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "→ Triggering ${{ steps.read.outputs.deploy }}"
+          gh workflow run "${{ steps.read.outputs.deploy }}" --ref "${{ github.ref }}"
+
+  # 横切：校验 registry 完整性（始终跑）
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate registry schema
+        run: |
+          [ -f .github/workflows/sdlc-registry.json ] || { echo "::error::missing"; exit 1; }
           REG=$(cat .github/workflows/sdlc-registry.json)
-          echo "$REG" | jq -e '.ci' > /dev/null || (echo "::error::registry.ci not set"; exit 1)
-          echo "$REG" | jq -e '.test' > /dev/null || (echo "::error::registry.test not set"; exit 1)
-          echo "$REG" | jq -e '.deploy' > /dev/null || (echo "::error::registry.deploy not set"; exit 1)
-          echo "✓ SDLC registry valid"
+          echo "$REG" | jq -e '.ci' > /dev/null || { echo "::error::.ci missing"; exit 1; }
+              echo "$REG" | jq -e '.test' > /dev/null || { echo "::error::.test missing"; exit 1; }
+              echo "$REG" | jq -e '.deploy' > /dev/null || { echo "::error::.deploy missing"; exit 1; }
+              echo "✓ SDLC registry valid"

@@ -1,38 +1,11 @@
 # SDLC Phase 4 CI — lint / 单测 / 覆盖率 / Docker build / Trivy 扫描
-# 触发器：workflow_call（被 dispatcher 调用）+ workflow_dispatch（手动触发）
+# 触发器：workflow_dispatch（被 dispatcher 用 gh workflow run 触发 / 手动触发）
 #
 # 用法：复制本文件到项目根 .github/workflows/sdlc-ci.yml
 
 name: SDLC CI
 
 on:
-  workflow_call:
-    inputs:
-      requirement_id:
-        description: '架构平台 requirement UUID（写 ci manifest 用）'
-        required: false
-        type: string
-        default: ''
-      arch_component_id:
-        description: '架构平台 component UUID（register 用）'
-        required: false
-        type: string
-        default: ''
-      lint_cmd:
-        description: 'lint 命令（默认读 aip.json.stack.language 推断）'
-        required: false
-        type: string
-        default: ''
-      test_cmd:
-        description: '测试命令（默认读 aip.json.stack 推断）'
-        required: false
-        type: string
-        default: ''
-      coverage_threshold:
-        description: '覆盖率门禁（百分比）'
-        required: false
-        type: number
-        default: 70
   workflow_dispatch:
     inputs:
       requirement_id:

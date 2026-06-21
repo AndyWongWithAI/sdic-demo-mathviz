@@ -1,5 +1,5 @@
 # SDLC Phase 6 Deploy — 复用 connect-cd + 增量接 arch deployment create
-# 触发器：workflow_call（被 dispatcher 调用）+ workflow_dispatch
+# 触发器：workflow_dispatch（被 dispatcher 用 gh workflow run 触发 / 手动触发）
 #
 # 设计：复用 connect-cd 的部署逻辑（restricted SSH + tarball + systemd），
 #       增量：在部署成功后调 `arch deployment create` 留痕
@@ -7,31 +7,6 @@
 name: SDLC Deploy
 
 on:
-  workflow_call:
-    inputs:
-      requirement_id:
-        description: 'requirement UUID'
-        required: false
-        type: string
-        default: ''
-      arch_component_id:
-        description: 'component UUID'
-        required: false
-        type: string
-        default: ''
-      arch_version_id:
-        description: 'version UUID（可选，从 arch-platform 取 latest）'
-        required: false
-        type: string
-        default: ''
-      service_name:
-        description: 'systemd service 名（如 my-website）'
-        required: true
-        type: string
-      deploy_target:
-        description: '部署目标（如 huawei-1 / lighthouse-2）'
-        required: true
-        type: string
   workflow_dispatch:
     inputs:
       requirement_id:
