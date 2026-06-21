@@ -138,12 +138,18 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     needs: docker-build
-    if: env.IMAGE_TAG != ''
     steps:
+      - name: Check if image exists
+        id: check
+        run: |
+          if [ -n "$IMAGE_TAG" ]; then
+            echo "has_image=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run Trivy vulnerability scanner
+        if: steps.check.outputs.has_image == 'true'
         uses: aquasecurity/trivy-action@0.24.0
         with:
-          image-ref: ${{ env.IMAGE_TAG }}
+          image-ref: $IMAGE_TAG
           format: 'json'
           output: 'artifacts/trivy-report.json'
           severity: 'CRITICAL,HIGH'
@@ -160,12 +166,19 @@ jobs:
   register:
     runs-on: ubuntu-latest
     needs: [test, scan]
-    if: env.ARCH_COMPONENT_ID != ''
     steps:
       - uses: actions/checkout@v4
+      - name: Check arch_component_id
+        id: check
+        run: |
+          if [ -n "$ARCH_COMPONENT_ID" ]; then
+            echo "has_component=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install arch CLI
+        if: steps.check.outputs.has_component == 'true'
         run: pip install arch-platform-cli
       - name: Create new version on arch-platform
+        if: steps.check.outputs.has_component == 'true'
         env:
           ARCH_API_KEY: ${{ secrets.ARCH_API_KEY }}
         run: |
@@ -178,9 +191,15 @@ jobs:
   write-manifest:
     runs-on: ubuntu-latest
     needs: [lint, test, docker-build, scan, register]
-    if: env.REQUIREMENT_ID != ''
     steps:
+      - name: Check requirement_id
+        id: check
+        run: |
+          if [ -n "$REQUIREMENT_ID" ]; then
+            echo "has_requirement=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Write CI manifest to runner temp
+        if: steps.check.outputs.has_requirement == 'true'
         env:
           REQUIREMENT_ID: ${{ env.REQUIREMENT_ID }}
         run: |
@@ -211,8 +230,9 @@ jobs:
           EOF
 
       - name: Upload manifest as artifact
+        if: always() && steps.check.outputs.has_requirement == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: sdlc-manifest-ci-${{ env.REQUIREMENT_ID }}
-          path: /tmp/sdlc-state/${{ env.REQUIREMENT_ID }}/ci.json
+          name: sdlc-manifest-ci-$REQUIREMENT_ID
+          path: /tmp/sdlc-state/$REQUIREMENT_ID/ci.json
           retention-days: 30
