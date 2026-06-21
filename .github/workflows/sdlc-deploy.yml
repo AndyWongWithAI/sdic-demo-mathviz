@@ -100,11 +100,18 @@ jobs:
   register-deployment:
     runs-on: ubuntu-latest
     needs: healthcheck
-    if: env.REQUIREMENT_ID != '' && env.ARCH_COMPONENT_ID != ''
     steps:
+      - name: Check arch_component_id
+        id: check
+        run: |
+          if [ -n "$REQUIREMENT_ID" ] && [ -n "$ARCH_COMPONENT_ID" ]; then
+            echo "has_inputs=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install arch CLI
+        if: steps.check.outputs.has_inputs == 'true'
         run: pip install arch-platform-cli
       - name: Create deployment record
+        if: steps.check.outputs.has_inputs == 'true'
         env:
           ARCH_API_KEY: ${{ secrets.ARCH_API_KEY }}
         run: |
@@ -119,7 +126,43 @@ jobs:
   write-manifest:
     runs-on: ubuntu-latest
     needs: [deploy, healthcheck, register-deployment]
-    if: always() && env.REQUIREMENT_ID != ''
+    steps:
+      - name: Check requirement_id
+        id: check
+        run: |
+          if [ -n "$REQUIREMENT_ID" ]; then
+            echo "has_requirement=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Write deploy manifest
+        if: always() && steps.check.outputs.has_requirement == 'true'
+        run: |
+          mkdir -p "/tmp/sdlc-state/$REQUIREMENT_ID"
+          STATUS="succeeded"
+          cat > "/tmp/sdlc-state/$REQUIREMENT_ID/deploy.json" <<EOF
+          {
+            "schema_version": "1.0",
+            "requirement_id": "$REQUIREMENT_ID",
+            "stage": "deploy",
+            "skill": "sdlc-deploy",
+            "skill_version": "1.0.0",
+            "status": "$STATUS",
+            "started_at": "${{ github.event.head_commit.timestamp }}",
+            "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "outputs": {
+              "arch_deployment_id": null,
+              "service_url": "${SERVICE_URL:-http://$DEPLOY_TARGET:8080}",
+              "deployment_log": "deploy.log"
+            },
+            "tags": ["sdlc", "deploy"]
+          }
+          EOF
+      - name: Upload deploy manifest
+        if: always() && steps.check.outputs.has_requirement == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-manifest-deploy-$REQUIREMENT_ID
+          path: /tmp/sdlc-state/$REQUIREMENT_ID/deploy.json
+          retention-days: 30
     steps:
       - name: Write deploy manifest
         env:
