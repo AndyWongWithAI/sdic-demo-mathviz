@@ -8,6 +8,11 @@
 
 name: SDLC Dispatcher
 
+# 显式授予 GITHUB_TOKEN 触发 workflow_dispatch 的权限
+permissions:
+  contents: read
+  actions: write
+
 on:
   push:
     branches: [main]
