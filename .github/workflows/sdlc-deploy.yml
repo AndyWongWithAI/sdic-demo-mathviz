@@ -1,49 +1,64 @@
-# SDLC Phase 6 Deploy — 复用 connect-cd + 增量接 arch deployment create
+# SDLC Phase 6 Deploy — sdic-demo-mathviz 静态站点 rsync 到 #1
 # 触发器：workflow_dispatch（被 dispatcher 用 gh workflow run 触发 / 手动触发）
 #
-# 设计：复用 connect-cd 的部署逻辑（restricted SSH + tarball + systemd），
-#       增量：在部署成功后调 `arch deployment create` 留痕
+# 设计：
+#   - 静态站点 → rsync 到 /var/www/mathviz
+#   - 不需要 systemd（nginx 直接 serve 静态文件）
+#   - 健康检查用 SERVICE_URL=https://mathviz.intelab.cn
+#   - 写 deploy.json 喂 sdlc-feedback-watchdog
 
-name: SDLC Deploy
+name: SDLC Deploy (mathviz)
 
 on:
   workflow_dispatch:
     inputs:
       requirement_id:
-        description: 'requirement UUID'
+        description: 'requirement UUID（b9a407b1...）'
         required: false
         default: ''
       service_name:
-        description: 'systemd service 名'
+        description: '服务名（用于 manifest 标识）'
         required: true
+        default: 'mathviz'
       deploy_target:
-        description: '部署目标'
+        description: '部署目标（host[:port] 形式）'
         required: true
+        default: 'root@124.71.219.208'
+      service_url:
+        description: '健康检查 URL'
+        required: true
+        default: 'https://mathviz.intelab.cn'
 
 env:
   REQUIREMENT_ID: ${{ inputs.requirement_id }}
-  ARCH_COMPONENT_ID: ${{ inputs.arch_component_id }}
-  ARCH_VERSION_ID: ${{ inputs.arch_version_id }}
   SERVICE_NAME: ${{ inputs.service_name }}
   DEPLOY_TARGET: ${{ inputs.deploy_target }}
+  SERVICE_URL: ${{ inputs.service_url }}
 
 jobs:
-  # Step 1: 拉取 CI 产物（image tag）
-  fetch-ci-artifacts:
+  # Step 1: Checkout + 准备文件
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      has_files: ${{ steps.check.outputs.has_files }}
     steps:
       - uses: actions/checkout@v4
-      - name: Download CI artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image-${{ github.sha }}
-        continue-on-error: true
+      - name: Check deployable files
+        id: check
+        run: |
+          if [ -f "index.html" ] || [ -f "index.htm" ]; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+            echo "→ 找到 index.html/index.htm"
+          else
+            echo "::error::未找到 index.html 或 index.htm"
+            exit 1
+          fi
 
-  # Step 2: 复用 connect-cd 部署逻辑（SCP + SSH + systemd restart）
+  # Step 2: rsync 到 #1
   deploy:
     runs-on: ubuntu-latest
-    needs: fetch-ci-artifacts
-    environment: ${{ inputs.deploy_target }}  # 引用 GH Environment 配置 SSH secrets
+    needs: prepare
+    environment: production  # 引用 GH Environment 配置 SSH_PRIVATE_KEY
     steps:
       - uses: actions/checkout@v4
 
@@ -52,80 +67,50 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Tarball + SCP + systemd restart (connect-cd pattern)
+      - name: rsync 静态文件到 /var/www/mathviz
         run: |
           set -euo pipefail
-          tar czf /tmp/app.tar.gz \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='__pycache__' \
-            --exclude='.venv' \
-            --exclude='artifacts' \
-            .
+          # 先 dry-run 统计文件数
+          FILE_COUNT=$(find . -type f \
+            -not -path './.git/*' \
+            -not -path './.github/*' \
+            -not -path './tests/*' \
+            -not -path './node_modules/*' \
+            | wc -l)
+          echo "→ 将部署 $FILE_COUNT 个文件到 $DEPLOY_TARGET:/var/www/mathviz/"
 
-          # SCP 到目标主机（路径来自 connect-cd 约定）
-          scp /tmp/app.tar.gz "$DEPLOY_TARGET:/tmp/app.tar.gz"
-
-          # SSH 远程执行解压 + 重启
-          ssh "$DEPLOY_TARGET" << 'REMOTE'
-          set -euo pipefail
-          APP_DIR="/opt/services/${SERVICE_NAME}"
-          sudo mkdir -p "$APP_DIR"
-          sudo tar xzf /tmp/app.tar.gz -C "$APP_DIR"
-          sudo systemctl restart "${SERVICE_NAME}.service"
-          sleep 3
-          sudo systemctl is-active "${SERVICE_NAME}.service"
-          REMOTE
+          # rsync（--delete 保持目录干净，--exclude 排除 .git/.github/tests）
+          rsync -avz --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='tests/' \
+            --exclude='node_modules/' \
+            --exclude='.gitignore' \
+            --exclude='*.md' \
+            -e "ssh -o StrictHostKeyChecking=accept-new" \
+            ./ "$DEPLOY_TARGET:/var/www/mathviz/"
 
           echo "✓ Deploy succeeded on $DEPLOY_TARGET"
 
-  # Step 3: Post-deploy health check（5 维诊断）
+  # Step 3: 健康检查
   healthcheck:
     runs-on: ubuntu-latest
     needs: deploy
     steps:
-      - uses: actions/checkout@v4
-      - name: Run 5-dim health check
+      - name: HTTP 健康检查
         run: |
-          # 复用 post-deploy-healthcheck 的 5 维诊断（精简版）
-          SERVICE_URL="${SERVICE_URL:-http://${DEPLOY_TARGET}:8080}"
-          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 "$SERVICE_URL" || echo "000")
+          set -euo pipefail
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -L "$SERVICE_URL" || echo "000")
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
             echo "::error::Health check failed: HTTP $HTTP_CODE at $SERVICE_URL"
             exit 1
           fi
-          echo "✓ Health check passed: HTTP $HTTP_CODE"
+          echo "✓ Health check passed: HTTP $HTTP_CODE at $SERVICE_URL"
 
-  # Step 4: 调 arch deployment create 留痕（增量价值）
-  register-deployment:
-    runs-on: ubuntu-latest
-    needs: healthcheck
-    steps:
-      - name: Check arch_component_id
-        id: check
-        run: |
-          if [ -n "$REQUIREMENT_ID" ] && [ -n "$ARCH_COMPONENT_ID" ]; then
-            echo "has_inputs=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Install arch CLI
-        if: steps.check.outputs.has_inputs == 'true'
-        run: pip install arch-platform-cli
-      - name: Create deployment record
-        if: steps.check.outputs.has_inputs == 'true'
-        env:
-          ARCH_API_KEY: ${{ secrets.ARCH_API_KEY }}
-        run: |
-          RESOLVED_VERSIONS=$(jq -n --arg v "$ARCH_VERSION_ID" '{($v): "0.0.1"}')
-          arch deployment create "$ARCH_COMPONENT_ID" \
-            --version-id "$ARCH_VERSION_ID" \
-            --target "$DEPLOY_TARGET" \
-            --resolved-versions "$RESOLVED_VERSIONS" \
-            --notes "Deployed by SDLC CI (commit ${{ github.sha }}, run ${{ github.run_number }})"
-
-  # Step 5: 写 deploy manifest 上传为 artifact
+  # Step 4: 写 deploy manifest 上传为 artifact（喂 watchdog）
   write-manifest:
     runs-on: ubuntu-latest
-    needs: [deploy, healthcheck, register-deployment]
+    needs: [deploy, healthcheck]
     steps:
       - name: Check requirement_id
         id: check
@@ -144,18 +129,19 @@ jobs:
             "requirement_id": "$REQUIREMENT_ID",
             "stage": "deploy",
             "skill": "sdlc-deploy",
-            "skill_version": "1.0.0",
+            "skill_version": "1.1.0",
             "status": "$STATUS",
             "started_at": "${{ github.event.head_commit.timestamp }}",
             "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "outputs": {
               "arch_deployment_id": null,
-              "service_url": "${SERVICE_URL:-http://$DEPLOY_TARGET:8080}",
+              "service_url": "$SERVICE_URL",
               "deployment_log": "deploy.log"
             },
-            "tags": ["sdlc", "deploy"]
+            "tags": ["sdlc", "deploy", "static-site"]
           }
           EOF
+          echo "✓ manifest: /tmp/sdlc-state/$REQUIREMENT_ID/deploy.json"
       - name: Upload deploy manifest
         if: always() && steps.check.outputs.has_requirement == 'true'
         uses: actions/upload-artifact@v4

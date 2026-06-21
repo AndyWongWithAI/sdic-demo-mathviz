@@ -61,8 +61,10 @@ jobs:
         run: |
           echo "→ Triggering ${{ steps.read.outputs.deploy }}"
           gh workflow run "${{ steps.read.outputs.deploy }}" --ref "${{ github.ref }}" \
-            -f service_name="sdic-demo-mathviz" \
-            -f deploy_target="gh-pages"
+            -f service_name="mathviz" \
+            -f deploy_target="root@124.71.219.208" \
+            -f service_url="https://mathviz.intelab.cn" \
+            -f requirement_id="b9a407b1-fad3-400e-b837-30325083a003"
 
   # 横切：校验 registry 完整性（始终跑）
   validate:
