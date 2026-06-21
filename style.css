@@ -1,57 +1,114 @@
+/* MathViz - 数学函数可视化样式 */
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  max-width: 900px;
-  margin: 2em auto;
-  padding: 0 1em;
-  color: #222;
+  font-family: -apple-system, system-ui, "PingFang SC", sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  background: #f8f9fa;
+  color: #333;
 }
-header h1 {
-  margin-bottom: 0.2em;
+header h1 { font-size: 1.8em; color: #0066cc; }
+header p { color: #666; margin-top: 4px; font-size: 0.9em; }
+
+/* tab 切换 */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 20px 0 0 0;
+  border-bottom: 2px solid #ddd;
 }
-header p {
+.tab {
+  padding: 10px 20px;
+  background: #e9ecef;
+  border: 1px solid #ddd;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 0.95em;
   color: #666;
-  font-size: 0.9em;
-  margin-top: 0;
+  transition: all 0.2s;
 }
+.tab:hover { background: #dee2e6; }
+.tab.active {
+  background: white;
+  color: #0066cc;
+  font-weight: 600;
+  border-color: #0066cc;
+  border-bottom: 2px solid white;
+  margin-bottom: -2px;
+}
+
+/* panel */
+.panel {
+  display: none;
+  background: white;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+}
+.panel.active { display: block; }
+
 .controls {
   display: flex;
-  gap: 1em;
-  margin-bottom: 1em;
   flex-wrap: wrap;
-  align-items: end;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  font-size: 0.9em;
 }
-.controls label {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.85em;
-}
-.controls input {
-  margin-top: 0.3em;
-  padding: 0.4em;
+.controls label { display: flex; align-items: center; gap: 6px; }
+.controls input[type="text"] {
+  padding: 6px 10px;
   border: 1px solid #ccc;
   border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.95em;
 }
-.controls button {
-  padding: 0.5em 1.5em;
+.controls input[type="number"] {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 80px;
+}
+button {
+  padding: 8px 16px;
   background: #0066cc;
   color: white;
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  height: fit-content;
+  font-size: 0.95em;
+  transition: background 0.2s;
 }
-.controls button:hover {
-  background: #0055aa;
+button:hover { background: #0052a3; }
+button.secondary { background: #6c757d; }
+button.secondary:hover { background: #545b62; }
+
+canvas {
+  border: 1px solid #ddd;
+  background: white;
+  max-width: 100%;
+  height: auto;
+  display: block;
 }
-#canvas {
-  border: 1px solid #ccc;
-  background: #fafafa;
-  width: 100%;
-  max-width: 800px;
-}
+
 .error {
   color: #c00;
-  margin-top: 1em;
+  background: #fee;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-top: 8px;
   font-size: 0.9em;
-  min-height: 1.5em;
+  min-height: 20px;
+}
+
+footer {
+  margin-top: 30px;
+  padding-top: 16px;
+  border-top: 1px solid #ddd;
+  color: #888;
+  font-size: 0.8em;
+  text-align: center;
 }

@@ -2,24 +2,64 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MathViz - 数学函数可视化</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
     <h1>MathViz</h1>
-    <p>数学函数可视化（SDLC 跨项目验证 demo · 目标需求 arch://b9a407b1）</p>
+    <p>数学函数可视化（SDLC 跨项目验证 · arch://b9a407b1）</p>
   </header>
-  <main>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="points">端点连线</div>
+    <div class="tab" data-tab="color">五维函数 (x,y,r,g,b)</div>
+    <div class="tab" data-tab="curve">函数曲线 (y=f(x))</div>
+  </div>
+
+  <!-- 面板 1: 端点连线 -->
+  <section id="panel-points" class="panel active">
     <div class="controls">
-      <label>函数 f(x): <input type="text" id="func" value="Math.sin(x)" size="20"></label>
-      <label>x_min: <input type="number" id="xmin" value="-10" step="0.5"></label>
-      <label>x_max: <input type="number" id="xmax" value="10" step="0.5"></label>
-      <button onclick="draw()">绘制</button>
+      <label>每边端点数 N: <input type="number" id="pn" value="20" min="2" max="100" step="1"></label>
+      <label>连线规则 k(i): <input type="text" id="pk" value="(i*7) % (4*n) + Math.floor(i/n)" size="30"></label>
+      <button onclick="drawPoints()">绘制</button>
+      <button class="secondary" onclick="exportCanvas('canvas-points')">导出 PNG</button>
     </div>
-    <canvas id="canvas" width="800" height="500"></canvas>
-    <div id="error" class="error"></div>
-  </main>
+    <canvas id="canvas-points" width="800" height="600"></canvas>
+    <div id="error-points" class="error"></div>
+  </section>
+
+  <!-- 面板 2: 五维函数 -->
+  <section id="panel-color" class="panel">
+    <div class="controls">
+      <label>R(x,y)= <input type="text" id="pr" value="0.5 + 0.5*Math.sin(x*4)" size="25"></label>
+      <label>G(x,y)= <input type="text" id="pg" value="0.5 + 0.5*Math.cos(y*4)" size="25"></label>
+      <label>B(x,y)= <input type="text" id="pb" value="Math.sqrt(x*x + y*y) % 1" size="25"></label>
+      <button onclick="drawColor()">渲染</button>
+      <button class="secondary" onclick="exportCanvas('canvas-color')">导出 PNG</button>
+    </div>
+    <canvas id="canvas-color" width="600" height="600"></canvas>
+    <div id="error-color" class="error"></div>
+  </section>
+
+  <!-- 面板 3: 函数曲线 (旧版保留) -->
+  <section id="panel-curve" class="panel">
+    <div class="controls">
+      <label>函数 f(x): <input type="text" id="cf" value="Math.sin(x)" size="20"></label>
+      <label>x_min: <input type="number" id="cxmin" value="-10" step="0.5"></label>
+      <label>x_max: <input type="number" id="cxmax" value="10" step="0.5"></label>
+      <button onclick="drawCurve()">绘制</button>
+      <button class="secondary" onclick="exportCanvas('canvas-curve')">导出 PNG</button>
+    </div>
+    <canvas id="canvas-curve" width="800" height="500"></canvas>
+    <div id="error-curve" class="error"></div>
+  </section>
+
+  <footer>
+    <small>由 SDLC 工作流部署 · <a href="https://github.com/AndyWongWithAI/sdic-demo-mathviz">源码</a></small>
+  </footer>
+
   <script src="math.js"></script>
   <script src="app.js"></script>
 </body>
