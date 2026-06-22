@@ -73,33 +73,30 @@ test('evalFunction2D: rejects injection', () => {
 });
 
 // ===== Part 3: generateSquarePoints =====
-test('generateSquarePoints: N=10 → 36 points (4 边 × N-1 + 4 角点共享)', () => {
+test('generateSquarePoints: N=10 → 40 points (每边 N 个，4N 总数)', () => {
   const pts = generateSquarePoints(400, 300, 400, 10);
-  // 设计：每边 N-1 个内部点（不含末角），4 角点共享 → 4(N-1) = 36
-  assert.strictEqual(pts.length, 36);
+  // 设计：每边 N 个端点，4 边共 4N 个点（4 角点各被两条边共享）
+  assert.strictEqual(pts.length, 40);
 });
 
-test('generateSquarePoints: 4 边各 N-1 个点', () => {
+test('generateSquarePoints: 4 边各 N 个点', () => {
   const pts = generateSquarePoints(400, 300, 400, 10);
-  // 统计各边数量
   const counts = [0, 0, 0, 0];
   for (const p of pts) counts[p.edge]++;
   for (let i = 0; i < 4; i++) {
-    assert.strictEqual(counts[i], 9, `edge ${i} 应有 9 个点`);
+    assert.strictEqual(counts[i], 10, `edge ${i} 应有 10 个点`);
   }
 });
 
-test('generateSquarePoints: 角点不重复', () => {
-  // 4 个角点（同时是两条边的端点）
-  const pts = generateSquarePoints(400, 300, 400, 5);
-  // 验证: bottom-left 应该是 idx=0 (edge 0), 也在 edge 3 的 idx=4
-  // 简化: 验证没有完全重合的点
-  const seen = new Set();
-  for (const p of pts) {
-    const key = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
-    assert(!seen.has(key), `点 ${key} 重复`);
-    seen.add(key);
-  }
+test('generateSquarePoints: 角点位置重合（被 2 条边共享）', () => {
+  // 4 个角点（被相邻两条边共享）→ 至少 2 个 entry 位置相同
+  const pts = generateSquarePoints(0, 0, 100, 5);
+  // bottom-left 角点：(left=-50, bottom=50)，edge 0 idx=0 和 edge 3 idx=4
+  // 验证它们位置完全相同
+  const bottomLeft0 = pts[0];   // edge 0 idx 0
+  const bottomLeft3 = pts[4 * 5 - 1];  // edge 3 last (idx=4, 5-1=4)
+  assert.strictEqual(bottomLeft0.x, bottomLeft3.x);
+  assert.strictEqual(bottomLeft0.y, bottomLeft3.y);
 });
 
 test('generateSquarePoints: N=1 → 4 角点', () => {
@@ -110,6 +107,16 @@ test('generateSquarePoints: N=1 → 4 角点', () => {
   for (const p of pts) {
     const key = `${p.x},${p.y}`;
     assert(expected.has(key), `点 ${key} 不是预期角点`);
+  }
+});
+
+test('generateSquarePoints: 索引 0..4N-1 全部可访问（连接规则对齐）', () => {
+  // 关键不变量：连接规则 0..4N-1 都能 points[i] 拿到一个有效 entry
+  const pts = generateSquarePoints(400, 300, 400, 10);
+  for (let i = 0; i < 4 * 10; i++) {
+    assert(pts[i] !== undefined, `points[${i}] 必须是有效 entry`);
+    assert(typeof pts[i].x === 'number', `points[${i}].x 必须是数字`);
+    assert(typeof pts[i].y === 'number', `points[${i}].y 必须是数字`);
   }
 });
 
@@ -167,15 +174,28 @@ test('colorAt: clamp 边界（>1 → 255）', () => {
 });
 
 test('colorAt: clamp 边界（<0 → 0）', () => {
-  // 用 (0-1)/2 表达 -0.5（沙箱禁 . ，所以不用裸 -0.5）
-  const [r] = colorAt(50, 50, 100, 100, '(0-1)/2', '0', '0', -1, 1, 1, -1);
+  // 沙箱支持裸数字小数 -0.5
+  const [r] = colorAt(50, 50, 100, 100, '-0.5', '0', '0', -1, 1, 1, -1);
   assert.strictEqual(r, 0);
 });
 
 test('colorAt: NaN → 0', () => {
-  // Math.sqrt(-1) = NaN（注意沙箱里 Math.sqrt 会被改写为 sqrt）
   const [r] = colorAt(50, 50, 100, 100, 'sqrt(-1)', '0', '0', -1, 1, 1, -1);
   assert.strictEqual(r, 0);
+});
+
+test('沙箱：支持裸数字小数（0.5, -0.5, 3.14）', () => {
+  assert.strictEqual(evalFunction('0.5', 0), 0.5);
+  assert.strictEqual(evalFunction('-0.5', 0), -0.5);
+  assert(Math.abs(evalFunction('3.14', 0) - 3.14) < 1e-10);
+  assert.strictEqual(evalFunction('1 + 0.5', 0), 1.5);
+});
+
+test('沙箱：仍禁 process.exit 等带点全局', () => {
+  assert.throws(() => evalFunction('process.exit(1)', 0));
+  assert.throws(() => evalFunction('global.foo', 0));
+  // 但允许数字字面量中的 .
+  assert.strictEqual(evalFunction('1.0 + 2.0', 0), 3);
 });
 
 test('renderColorField: 输出维度正确', () => {
@@ -192,9 +212,8 @@ test('renderColorField: 输出维度正确', () => {
   }
 });
 
-test('renderColorField: R=1/2 → 像素 R=128', () => {
-  // 用 1/2 表达 0.5（沙箱禁 . ，所以不用裸 0.5）
-  const data = renderColorField(4, 4, '1/2', '0', '0', -1, 1, 1, -1);
+test('renderColorField: R=0.5 → 像素 R=128', () => {
+  const data = renderColorField(4, 4, '0.5', '0', '0', -1, 1, 1, -1);
   // 检查第一个像素的 R
   assert.strictEqual(data[0], 128);  // round(0.5*255) = 128
   // alpha = 255
