@@ -138,8 +138,89 @@ jobs:
           name: coverage-${{ matrix.language }}
           path: artifacts/
 
+  # E2E 测试（仅 Node 项目有 playwright.config.js 时跑）
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test-multi-stack
+    steps:
+      - name: Check Playwright config exists
+        id: check
+        run: |
+          if [ -f "playwright.config.js" ] || [ -f "playwright.config.ts" ]; then
+            echo "has_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "→ 检测到 Playwright 配置，将跑 E2E"
+          else
+            echo "has_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "⊘ 无 Playwright 配置，跳过 E2E"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.has_e2e == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        if: steps.check.outputs.has_e2e == 'true'
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.check.outputs.has_e2e == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local server (background)
+        if: steps.check.outputs.has_e2e == 'true'
+        run: |
+          # 纯静态站用 python http.server；如有 build step 自行替换
+          python3 -m http.server 8000 > /tmp/http-server.log 2>&1 &
+          echo $! > /tmp/http-server.pid
+          sleep 3
+          curl -sf http://localhost:8000/ > /dev/null || { echo "::error::server failed"; cat /tmp/http-server.log; exit 1; }
+          echo "✓ http server up at :8000"
+
+      - name: Run Playwright E2E
+        if: steps.check.outputs.has_e2e == 'true'
+        run: E2E_BASE_URL=http://localhost:8000 npx playwright test
+        env:
+          CI: 'true'
+
+      - name: Stop server
+        if: always() && steps.check.outputs.has_e2e == 'true'
+        run: |
+          if [ -f /tmp/http-server.pid ]; then
+            kill $(cat /tmp/http-server.pid) 2>/dev/null || true
+            rm -f /tmp/http-server.pid
+          fi
+
+      - name: Upload Playwright report
+        if: always() && steps.check.outputs.has_e2e == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+        continue-on-error: true
+
+      - name: Set e2e status output
+        if: steps.check.outputs.has_e2e == 'true'
+        id: e2e-status
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set e2e status output (skipped)
+        if: steps.check.outputs.has_e2e != 'true'
+        id: e2e-skip
+        run: echo "status=skipped" >> "$GITHUB_OUTPUT"
+
   # 汇总：所有栈通过才继续
   write-manifest:
+    needs: [test-multi-stack, e2e]
     runs-on: ubuntu-latest
     needs: test-multi-stack
     steps:
@@ -153,6 +234,7 @@ jobs:
         if: steps.check.outputs.has_requirement == 'true'
         env:
           REQUIREMENT_ID: ${{ env.REQUIREMENT_ID }}
+          E2E_STATUS: ${{ needs.e2e.outputs.status || 'skipped' }}
         run: |
           mkdir -p "/tmp/sdlc-state/$REQUIREMENT_ID"
           cat > "/tmp/sdlc-state/$REQUIREMENT_ID/test.json" <<EOF
@@ -168,10 +250,10 @@ jobs:
             "outputs": {
               "coverage_html": "artifacts/coverage/index.html",
               "test_report": "artifacts/junit.xml",
-              "e2e_status": "skipped",
+              "e2e_status": "$E2E_STATUS",
               "stacks_tested": ["node", "python", "go", "java", "rust", "php"]
             },
-            "tags": ["sdlc", "test", "multi-stack"]
+            "tags": ["sdlc", "test", "multi-stack", "e2e-$E2E_STATUS"]
           }
           EOF
       - name: Upload test manifest
