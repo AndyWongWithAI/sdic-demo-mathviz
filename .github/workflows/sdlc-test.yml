@@ -222,7 +222,6 @@ jobs:
   write-manifest:
     needs: [test-multi-stack, e2e]
     runs-on: ubuntu-latest
-    needs: test-multi-stack
     steps:
       - name: Check requirement_id
         id: check
