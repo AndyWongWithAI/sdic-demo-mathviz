@@ -1,0 +1,26 @@
+{
+  "name": "sdic-demo-mathviz",
+  "version": "1.0.0",
+  "description": "数学函数可视化网站。SDLC workflow 跨项目验证 demo。",
+  "main": "app.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AndyWongWithAI/sdic-demo-mathviz.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AndyWongWithAI/sdic-demo-mathviz/issues"
+  },
+  "homepage": "https://github.com/AndyWongWithAI/sdic-demo-mathviz#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
+}

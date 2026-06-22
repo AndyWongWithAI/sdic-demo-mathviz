@@ -128,16 +128,8 @@ function generateSquarePoints(cx, cy, side, n) {
 function generateConnections(kStr, n) {
   if (!kStr || !kStr.trim()) throw new Error('连线规则不能为空');
   const total = 4 * n;
-  const allowed = /^[a-zA-Z0-9_+\-*/%().,\s]+$/;
-  if (!allowed.test(kStr)) {
-    throw new Error('连线规则包含非法字符');
-  }
-  let kfn;
-  try {
-    kfn = new Function('i', 'n', `with (Math) { return (${kStr}); }`);
-  } catch (e) {
-    throw new Error('规则语法错误: ' + e.message);
-  }
+  // 复用 _safeCompile 沙箱（防 process.exit 等注入）
+  const kfn = _safeCompile(kStr, ['i', 'n']);
   const pairs = [];
   for (let i = 0; i < total; i++) {
     let target;
